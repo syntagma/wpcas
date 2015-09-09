@@ -59,11 +59,14 @@ if ($wpcas_options['server_hostname'] == '' ||
 	$cas_configured = false;
 
 if ($cas_configured) {
-	phpCAS::client($wpcas_options['cas_version'], 
+	/**
+	 * @author dbalseiro
+	 * Se cambia el metodo CAS por SAML
+	 */
+	phpCAS::client(SAML_VERSION_1_1, 
 		$wpcas_options['server_hostname'], 
 		intval($wpcas_options['server_port']), 
-		$wpcas_options['server_path']);
-	
+		$wpcas_options['server_path']);	
 	// function added in phpCAS v. 0.6.0
 	// checking for static method existance is frustrating in php4
 	$phpCas = new phpCas();
@@ -71,6 +74,13 @@ if ($cas_configured) {
 		phpCAS::setNoCasServerValidation();
 	unset($phpCas);
 	// if you want to set a cert, replace the above few lines
+
+	/**
+	 * @author dbalseiro
+	 * Esto para que ande con la nueva Version de OpenSSL
+     */
+	#phpCAS::setExtraCurlOption(CURLOPT_SSLVERSION, 3);
+	/***/
  }
 
 // plugin hooks into authentication system
@@ -91,34 +101,63 @@ class wpCAS {
 	function authenticate() {
 		global $wpcas_options, $cas_configured;
 		
+		phpCAS::setDebug('/tmp/phpCAS.log');
+
 		if ( !$cas_configured )
 			die( __( 'wpCAS plugin not configured', 'wpcas' ));
 
 		if( phpCAS::isAuthenticated() ){
+			/**
+			 * @author dbalseiro
+			 * Me fijo en el atributo Tipo de Usuario para ver si accede o no a la app
+			 */
+			$tipoUsr = phpCAS::getAttributes();
+			$tipoUsr = $tipoUsr['personType'];
+
+			phpCAS::trace($tipoUsr);
+			if ($tipoUsr != 'INTERNA') {
+				wp_die ('No tiene permiso para acceder a esta aplicacion');
+				die();
+			}
 			// CAS was successful
-			if ( $user = get_userdatabylogin( phpCAS::getUser() )){ // user already exists
+			$user = get_user_by('login', phpCAS::getUser() );
+			
+			if (!$user) {
+				$email = phpCAS::getAttributes();
+				$email = $email['email'];
+				$user = get_user_by('email', $email);
+			}
+			if ( $user ) { // user already exists
 				// the CAS user has a WP account
-				wp_set_auth_cookie( $user->ID );
+				wp_set_auth_cookie($user->ID );
 
 				if( isset( $_GET['redirect_to'] )){
 					wp_redirect( preg_match( '/^http/', $_GET['redirect_to'] ) ? $_GET['redirect_to'] : site_url( $_GET['redirect_to'] ));
 					die();
 				}
 
-				wp_redirect( site_url( '/wp-admin/' ));
+				wp_redirect( site_url( '/' ));
 				die();
 
 			}else{
 				// the CAS user _does_not_have_ a WP account
-				if (function_exists( 'wpcas_nowpuser' ))
-					wpcas_nowpuser( phpCAS::getUser() );
-				else
+
+				if (function_exists( 'wpcas_nowpuser' )) {
+
+					$email = phpCAS::getAttributes();
+					
+		                        $email = $email['email'];
+					
+					wpcas_nowpuser( phpCAS::getUser(), $email );
+				}
+				else {
 					die( __( 'you do not have permission here', 'wpcas' ));
+				}
 			}
-		}else{
-			// hey, authenticate
+		}
+		else {
 			phpCAS::forceAuthentication();
-			die();
+			die("NOT AUTHENTICATED");
 		}
 	}
 	
@@ -151,7 +190,6 @@ class wpCAS {
 		$pass1=$pass2=$random_password;
 	}
 }
-
 //----------------------------------------------------------------------------
 //		ADMIN OPTION PAGE FUNCTIONS
 //----------------------------------------------------------------------------
